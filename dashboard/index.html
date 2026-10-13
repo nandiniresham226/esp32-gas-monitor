@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gas Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --paper: #eef1ef;
+    --ink: #16262a;
+    --muted: #5f7075;
+    --line: #cfd8d5;
+    --safe: #2c8a58;   --safe-bg: #dcefe4;
+    --warn: #b9860f;   --warn-bg: #f6e8bd;
+    --danger: #c2372d; --danger-bg: #f5d5d1;
+    --off: #6b7b80;    --off-bg: #dde3e1;
+    --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    --body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121c1f; --ink: #e6eeec; --muted: #93a6a9; --line: #2b3b3f;
+      --safe: #52c486;  --safe-bg: #17352a;
+      --warn: #e2b53f;  --warn-bg: #3a3014;
+      --danger: #ef6a5e; --danger-bg: #43201c;
+      --off: #8fa0a4;   --off-bg: #223034;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--body); line-height: 1.5; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px 48px; }
+
+  /* status band: the one memorable element */
+  .band { background: var(--off-bg); color: var(--off); transition: background .4s, color .4s; }
+  .band.SAFE    { background: var(--safe-bg);   color: var(--safe); }
+  .band.WARNING { background: var(--warn-bg);   color: var(--warn); }
+  .band.DANGER  { background: var(--danger-bg); color: var(--danger); }
+  .band .wrap { padding-top: 28px; padding-bottom: 26px; display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+  .state { font-family: var(--display); font-weight: 700; font-size: clamp(44px, 10vw, 92px); line-height: .95; letter-spacing: -0.02em; margin: 0; }
+  .band p { margin: 6px 0 0; color: var(--ink); max-width: 46ch; }
+  .meta { text-align: right; font-size: 14px; color: var(--ink); }
+  .meta b { display: block; font-weight: 600; }
+
+  /* readings */
+  .readings { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 28px; }
+  .reading { padding: 4px 22px 4px 0; }
+  .reading + .reading { padding-left: 22px; border-left: 1px solid var(--line); }
+  .reading h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .reading .sub { color: var(--muted); font-size: 13px; }
+  .val { font-family: var(--display); font-weight: 700; font-size: clamp(32px, 6vw, 54px); line-height: 1.1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .val small { font-family: var(--body); font-weight: 500; font-size: 15px; color: var(--muted); margin-left: 4px; }
+  .gauge { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin-top: 12px; }
+  .gauge i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--safe); transition: width .5s, background .4s; }
+  .gauge u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .55; }
+  .gauge-note { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  /* chart */
+  .history { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 22px; }
+  .history header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+  .history h2 { margin: 0; font-family: var(--display); font-size: 24px; }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button { font: inherit; font-size: 14px; font-weight: 500; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+  .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .tabs button:focus-visible { outline: 3px solid var(--safe); outline-offset: 2px; }
+  .chartbox { position: relative; height: 320px; margin-top: 16px; }
+  .empty { color: var(--muted); margin-top: 16px; }
+
+  @media (max-width: 640px) {
+    .readings { grid-template-columns: 1fr; gap: 22px; }
+    .reading, .reading + .reading { padding: 0; border-left: 0; }
+    .reading + .reading { border-top: 1px solid var(--line); padding-top: 18px; }
+    .meta { text-align: left; }
+  }
+</style>
+</head>
+<body>
+
+<div class="band" id="band">
+  <div class="wrap">
+    <div>
+      <h1 class="state" id="state">Waiting</h1>
+      <p id="stateText">Connecting to the monitor...</p>
+    </div>
+    <div class="meta">
+      <b id="updated">No data yet</b>
+      <span id="conn"></span>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+  <section class="readings" aria-label="Live readings">
+    <div class="reading">
+      <h2>LPG</h2><div class="sub">MQ-6, approximate</div>
+      <div class="val"><span id="v-lpg">--</span><small>ppm</small></div>
+      <div class="gauge"><i id="g-lpg"></i><u id="m-lpg-w"></u><u id="m-lpg-d"></u></div>
+      <div class="gauge-note"><span>0</span><span id="n-lpg"></span></div>
+    </div>
+    <div class="reading">
+      <h2>CO2 equivalent</h2><div class="sub">MQ-135, rough estimate</div>
+      <div class="val"><span id="v-co2">--</span><small>ppm</small></div>
+      <div class="gauge"><i id="g-co2"></i><u id="m-co2-w"></u><u id="m-co2-d"></u></div>
+      <div class="gauge-note"><span>400</span><span id="n-co2"></span></div>
+    </div>
+    <div class="reading">
+      <h2>NO2 sensor</h2><div class="sub">raw voltage, not ppm yet</div>
+      <div class="val"><span id="v-no2">--</span><small>mV</small></div>
+      <div class="gauge"><i id="g-no2"></i><u id="m-no2-w"></u><u id="m-no2-d"></u></div>
+      <div class="gauge-note"><span>0</span><span id="n-no2"></span></div>
+    </div>
+  </section>
+
+  <section class="history" aria-label="History">
+    <header>
+      <h2>History</h2>
+      <div class="tabs" role="group" aria-label="Choose a reading">
+        <button data-k="lpg" aria-pressed="true">LPG</button>
+        <button data-k="co2" aria-pressed="false">CO2e</button>
+        <button data-k="no2" aria-pressed="false">NO2</button>
+      </div>
+    </header>
+    <div class="chartbox"><canvas id="chart" role="img" aria-label="History chart of the selected reading"></canvas></div>
+    <p class="empty" id="histEmpty" hidden>No history yet. A new point is saved every 10 seconds.</p>
+  </section>
+</main>
+
+<script>
+// ============ SETTINGS ============
+const SUPABASE_URL = "https://nmcdlzwicwuvwutjchov.supabase.co";  // no trailing slash
+const SUPABASE_KEY = "sb_publishable_hg6D5ksRse79OSaon9IDYg_SQNSYZcZ";                  // sb_publishable_... (safe in a web page)
+const LIVE_EVERY_MS    = 5000;
+const HISTORY_EVERY_MS = 60000;
+const HISTORY_POINTS   = 720;      // 720 points = 2 hours at one point per 10 s
+const OFFLINE_AFTER_S  = 45;       // no new data for this long = offline
+
+// Must match the thresholds in the ESP32 code
+const LIMITS = {
+  lpg: { warn: 1000, danger: 3000, max: 4000, unit: "ppm", label: "LPG", base: 0 },
+  co2: { warn: 1000, danger: 2000, max: 3000, unit: "ppm", label: "CO2e", base: 400 },
+  no2: { warn: 1000, danger: 2000, max: 3000, unit: "mV",  label: "NO2", base: 0 }
+};
+// ==================================
+
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let history = [], metric = "lpg", chart;
+
+const TEXT = {
+  SAFE:    "All three sensors are within the safe range.",
+  WARNING: "At least one sensor is above its warning level. Check the area and ventilate.",
+  DANGER:  "At least one sensor is above its danger level. Leave the area and ventilate if it is safe to do so."
+};
+
+function setupMarkers() {
+  for (const k in LIMITS) {
+    const L = LIMITS[k], span = L.max - L.base;
+    $("m-" + k + "-w").style.left = ((L.warn - L.base) / span * 100) + "%";
+    $("m-" + k + "-d").style.left = ((L.danger - L.base) / span * 100) + "%";
+    $("n-" + k).textContent = "warn " + L.warn + " / danger " + L.danger;
+  }
+}
+
+function renderLive(d) {
+  const age = Math.floor(Date.now() / 1000) - d.ts;
+  const offline = age > OFFLINE_AFTER_S;
+  const s = offline ? "OFFLINE" : d.status;
+  $("band").className = "band " + (offline ? "" : d.status);
+  $("state").textContent = offline ? "Offline" : d.status === "SAFE" ? "Safe" : d.status === "WARNING" ? "Warning" : "Danger";
+  $("stateText").textContent = offline
+    ? "The monitor has not reported for " + (age < 120 ? age + " seconds" : Math.round(age / 60) + " minutes") + ". Check its power and Wi-Fi."
+    : TEXT[d.status];
+  $("updated").textContent = "Updated " + new Date(d.ts * 1000).toLocaleTimeString();
+  $("conn").textContent = offline ? "Showing last known values" : "Live";
+
+  for (const k in LIMITS) {
+    const L = LIMITS[k], v = d[k];
+    $("v-" + k).textContent = Math.round(v);
+    const pct = Math.max(0, Math.min(100, (v - L.base) / (L.max - L.base) * 100));
+    const bar = $("g-" + k);
+    bar.style.width = pct + "%";
+    bar.style.background = v >= L.danger ? css("--danger") : v >= L.warn ? css("--warn") : css("--safe");
+  }
+}
+
+async function getJSON(path) {
+  const r = await fetch(SUPABASE_URL + "/rest/v1" + path, { headers: { apikey: SUPABASE_KEY } });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function pollLive() {
+  try {
+    const rows = await getJSON("/readings?select=*&order=created_at.desc&limit=1");
+    const d = rows[0];
+    if (d) { d.ts = Math.floor(Date.parse(d.created_at) / 1000); renderLive(d); }
+    else $("stateText").textContent = "Connected to the database, but the monitor has not sent data yet.";
+  } catch (e) {
+    $("state").textContent = "No link";
+    $("stateText").textContent = "Cannot reach the database. Check SUPABASE_URL and SUPABASE_KEY in this file, and your internet connection.";
+    $("band").className = "band";
+  }
+}
+
+async function pollHistory() {
+  try {
+    const rows = await getJSON("/readings?select=created_at,lpg,co2,no2&order=created_at.desc&limit=" + HISTORY_POINTS);
+    history = rows.reverse().map(p => ({ ...p, ts: Math.floor(Date.parse(p.created_at) / 1000) }));
+    drawChart();
+  } catch (e) { /* keep the previous chart */ }
+}
+
+function drawChart() {
+  $("histEmpty").hidden = history.length > 0;
+  const L = LIMITS[metric];
+  const labels = history.map(p => new Date(p.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+  const data = history.map(p => p[metric]);
+  const flat = n => history.map(() => n);
+  const ds = [
+    { label: L.label + " (" + L.unit + ")", data, borderColor: css("--ink"), backgroundColor: css("--ink"), borderWidth: 2, pointRadius: 0, tension: .25 },
+    { label: "Warning", data: flat(L.warn), borderColor: css("--warn"), borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0 },
+    { label: "Danger", data: flat(L.danger), borderColor: css("--danger"), borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0 }
+  ];
+  if (chart) { chart.data.labels = labels; chart.data.datasets = ds; chart.update("none"); return; }
+  chart = new Chart($("chart"), {
+    type: "line",
+    data: { labels, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "bottom", labels: { color: css("--muted"), usePointStyle: true, boxWidth: 8 } } },
+      scales: {
+        x: { ticks: { color: css("--muted"), maxTicksLimit: 8 }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { color: css("--muted") }, grid: { color: css("--line") } }
+      }
+    }
+  });
+}
+
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  metric = b.dataset.k;
+  document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  drawChart();
+}));
+
+setupMarkers();
+pollLive(); pollHistory();
+setInterval(pollLive, LIVE_EVERY_MS);
+setInterval(pollHistory, HISTORY_EVERY_MS);
+</script>
+</body>
+</html>
